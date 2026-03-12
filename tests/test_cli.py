@@ -202,6 +202,53 @@ rules:
     assert payload["semantic_error"] is None
 
 
+def test_check_uses_branch_and_environment_flags(tmp_path: Path) -> None:
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text(
+        """
+version: 1
+default_action: allowed
+rules:
+  - name: guard-main-prod
+    action: blocked
+    directory: ["src"]
+    branch: ["main"]
+    environment: ["prod"]
+""",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text('{\"changed_files\": [\"src/app.py\"]}', encoding="utf-8")
+
+    blocked_code = main(
+        [
+            "check",
+            str(plan_path),
+            "--policy",
+            str(policy_path),
+            "--branch",
+            "main",
+            "--environment",
+            "prod",
+        ]
+    )
+    allowed_code = main(
+        [
+            "check",
+            str(plan_path),
+            "--policy",
+            str(policy_path),
+            "--branch",
+            "feature/x",
+            "--environment",
+            "dev",
+        ]
+    )
+
+    assert blocked_code == 1
+    assert allowed_code == 0
+
+
 def test_lint_policy_detects_warnings_and_strict_fails(tmp_path: Path, capsys) -> None:
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(

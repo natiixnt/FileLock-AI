@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from filelock_ai.engine import EvaluationReport, evaluate_changes, evaluate_path
+from filelock_ai.engine import EvaluationContext, EvaluationReport, evaluate_changes, evaluate_path
 from filelock_ai.linting import LintWarning, lint_policy
 from filelock_ai.policy import PolicyError, load_policy
 from filelock_ai.schema_validation import SchemaValidationError, validate_policy_against_schema
@@ -69,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="text",
         help="Output format. Default: text",
     )
+    _add_context_args(check_parser)
     _add_exit_behavior_args(check_parser)
 
     validate_parser = subparsers.add_parser(
@@ -86,6 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="text",
         help="Output format. Default: text",
     )
+    _add_context_args(validate_parser)
     _add_exit_behavior_args(validate_parser)
 
     validate_policy_parser = subparsers.add_parser(
@@ -137,6 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="text",
         help="Output format. Default: text",
     )
+    _add_context_args(explain_parser)
 
     init_parser = subparsers.add_parser("init-policy", help="Create a starter policy file.")
     init_parser.add_argument(
@@ -200,6 +203,17 @@ def _add_exit_behavior_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_context_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--branch",
+        help="Optional git branch context for branch-scoped policy rules.",
+    )
+    parser.add_argument(
+        "--environment",
+        help="Optional environment context for environment-scoped policy rules.",
+    )
+
+
 def run_check(args: argparse.Namespace) -> int:
     try:
         policy = load_policy(args.policy)
@@ -209,7 +223,8 @@ def run_check(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    report = evaluate_changes(policy, changed_files)
+    context = _build_context(args)
+    report = evaluate_changes(policy, changed_files, context=context)
     _render_report(report, args.format)
     return _resolve_exit_code(
         report,
@@ -228,7 +243,8 @@ def run_validate(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    report = evaluate_changes(policy, changed_files)
+    context = _build_context(args)
+    report = evaluate_changes(policy, changed_files, context=context)
     _render_report(report, args.format)
     return _resolve_exit_code(
         report,
@@ -306,7 +322,8 @@ def run_explain(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    decision = evaluate_path(policy, args.path)
+    context = _build_context(args)
+    decision = evaluate_path(policy, args.path, context=context)
     payload = {
         "path": decision.path,
         "action": decision.action,
@@ -315,6 +332,8 @@ def run_explain(args: argparse.Namespace) -> int:
         "tags": list(decision.tags),
         "default_action": policy.default_action,
         "used_default": decision.matched_rule is None,
+        "branch": context.branch,
+        "environment": context.environment,
     }
 
     if args.format == "json":
@@ -590,6 +609,12 @@ def _resolve_exit_code(
         return exit_code_ok
 
     return exit_code_ok
+
+
+def _build_context(args: argparse.Namespace) -> EvaluationContext:
+    branch = getattr(args, "branch", None)
+    environment = getattr(args, "environment", None)
+    return EvaluationContext(branch=branch, environment=environment)
 
 
 if __name__ == "__main__":

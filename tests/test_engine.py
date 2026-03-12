@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from filelock_ai.engine import evaluate_changes
+import pytest
+
+from filelock_ai.engine import EvaluationContext, evaluate_changes
 from filelock_ai.policy import load_policy
 
 
@@ -122,3 +124,149 @@ rules:
 
     assert [item.path for item in report.allowed] == ["src/app.py"]
     assert [item.path for item in report.blocked] == ["infra/prod.tf"]
+
+
+def test_negated_glob_blocks_except_explicit_allow_path(tmp_path: Path) -> None:
+    policy_path = write_policy(
+        tmp_path / "policy.yaml",
+        """
+version: 1
+default_action: allowed
+rules:
+  - name: block-src-except-public
+    action: blocked
+    path_glob: ["src/**", "!src/public/**"]
+""",
+    )
+
+    policy = load_policy(policy_path)
+    report = evaluate_changes(policy, ["src/private/app.py", "src/public/app.py"])
+
+    assert [item.path for item in report.blocked] == ["src/private/app.py"]
+    assert [item.path for item in report.allowed] == ["src/public/app.py"]
+
+
+def test_branch_and_environment_scoped_rule(tmp_path: Path) -> None:
+    policy_path = write_policy(
+        tmp_path / "policy.yaml",
+        """
+version: 1
+default_action: allowed
+rules:
+  - name: review-main-prod
+    action: manual_approval
+    directory: ["src"]
+    branch: ["main"]
+    environment: ["prod*"]
+""",
+    )
+
+    policy = load_policy(policy_path)
+    prod_context = EvaluationContext(branch="main", environment="production")
+    dev_context = EvaluationContext(branch="feature/auth", environment="dev")
+
+    prod_report = evaluate_changes(policy, ["src/app.py"], context=prod_context)
+    dev_report = evaluate_changes(policy, ["src/app.py"], context=dev_context)
+
+    assert [item.path for item in prod_report.approval_required] == ["src/app.py"]
+    assert [item.path for item in dev_report.allowed] == ["src/app.py"]
+
+
+def test_case_sensitive_mode_affects_directory_matching(tmp_path: Path) -> None:
+    sensitive_path = write_policy(
+        tmp_path / "sensitive.yaml",
+        """
+version: 1
+case_sensitive: true
+default_action: allowed
+rules:
+  - name: lock-src-capitalized
+    action: blocked
+    directory: ["Src"]
+""",
+    )
+    insensitive_path = write_policy(
+        tmp_path / "insensitive.yaml",
+        """
+version: 1
+case_sensitive: false
+default_action: allowed
+rules:
+  - name: lock-src-capitalized
+    action: blocked
+    directory: ["Src"]
+""",
+    )
+
+    sensitive_policy = load_policy(sensitive_path)
+    insensitive_policy = load_policy(insensitive_path)
+
+    sensitive_report = evaluate_changes(sensitive_policy, ["src/app.py", "Src/app.py"])
+    insensitive_report = evaluate_changes(insensitive_policy, ["src/app.py", "Src/app.py"])
+
+    assert [item.path for item in sensitive_report.blocked] == ["Src/app.py"]
+    assert [item.path for item in insensitive_report.blocked] == ["src/app.py", "Src/app.py"]
+
+
+def test_symlink_guard_blocks_changes_when_symlink_policy_blocked(tmp_path: Path) -> None:
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "file.txt").write_text("x", encoding="utf-8")
+    try:
+        (tmp_path / "linked").symlink_to(tmp_path / "real")
+    except OSError:
+        pytest.skip("Symlinks are not available in this environment")
+
+    policy_path = write_policy(
+        tmp_path / "policy.yaml",
+        """
+version: 1
+symlink_policy: blocked
+default_action: allowed
+rules: []
+""",
+    )
+
+    policy = load_policy(policy_path)
+    report = evaluate_changes(policy, ["linked/file.txt"])
+
+    assert [item.path for item in report.blocked] == ["linked/file.txt"]
+    assert report.blocked[0].matched_rule == "symlink-guard:linked"
+
+
+def test_include_and_rule_group_expansion(tmp_path: Path) -> None:
+    base = tmp_path / "base.yaml"
+    base.write_text(
+        """
+version: 1
+default_action: allowed
+rule_groups:
+  lock_infra:
+    - name: lock-infra
+      action: blocked
+      directory: ["infra"]
+""",
+        encoding="utf-8",
+    )
+
+    main = tmp_path / "main.yaml"
+    main.write_text(
+        """
+include: ["base.yaml"]
+version: 1
+default_action: allowed
+rules:
+  - use_group: lock_infra
+    name_prefix: "base:"
+  - name: allow-src
+    action: allowed
+    directory: ["src"]
+""",
+        encoding="utf-8",
+    )
+
+    policy = load_policy(str(main))
+    report = evaluate_changes(policy, ["infra/main.tf", "src/app.py"])
+
+    assert any(rule.name == "base:lock-infra" for rule in policy.rules)
+    assert [item.path for item in report.blocked] == ["infra/main.tf"]
+    assert [item.path for item in report.allowed] == ["src/app.py"]

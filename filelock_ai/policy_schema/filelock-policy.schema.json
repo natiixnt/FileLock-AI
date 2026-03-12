@@ -15,6 +15,15 @@
     "default_action": {
       "$ref": "#/$defs/action"
     },
+    "case_sensitive": {
+      "type": "boolean"
+    },
+    "symlink_policy": {
+      "$ref": "#/$defs/actionOrAllowAlias"
+    },
+    "include": {
+      "$ref": "#/$defs/stringOrStringArray"
+    },
     "tag_definitions": {
       "$ref": "#/$defs/tagDefinitions"
     },
@@ -22,10 +31,26 @@
       "$ref": "#/$defs/tagDefinitions",
       "description": "Legacy alias for tag_definitions."
     },
+    "rule_groups": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/ruleDefinition"
+        }
+      }
+    },
     "rules": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/rule"
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ruleDefinition"
+          },
+          {
+            "$ref": "#/$defs/ruleGroupReference"
+          }
+        ]
       }
     }
   },
@@ -33,6 +58,10 @@
     "action": {
       "type": "string",
       "enum": ["allowed", "manual_approval", "readonly", "blocked"]
+    },
+    "actionOrAllowAlias": {
+      "type": "string",
+      "enum": ["allow", "allowed", "manual_approval", "readonly", "blocked"]
     },
     "stringArray": {
       "type": "array",
@@ -58,7 +87,7 @@
         "$ref": "#/$defs/stringOrStringArray"
       }
     },
-    "rule": {
+    "ruleDefinition": {
       "type": "object",
       "additionalProperties": false,
       "required": ["action"],
@@ -105,8 +134,46 @@
         },
         "tag": {
           "$ref": "#/$defs/stringOrStringArray"
+        },
+        "branch": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "branches": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "environment": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "environments": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "env": {
+          "$ref": "#/$defs/stringOrStringArray"
         }
       }
+    },
+    "ruleGroupReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "use_group": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "use_groups": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "name_prefix": {
+          "type": "string"
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["use_group"]
+        },
+        {
+          "required": ["use_groups"]
+        }
+      ]
     }
   }
 }

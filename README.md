@@ -84,6 +84,9 @@ filelock-ai lint-policy --policy filelock-policy.yaml --strict
 
 # 6) Validate policy against JSON schema
 filelock-ai validate-policy filelock-policy.yaml --format json
+
+# 7) Pass branch/environment context
+filelock-ai check examples/plan.json --policy filelock-policy.yaml --branch main --environment prod
 ```
 
 Exit codes:
@@ -97,7 +100,11 @@ Exit codes:
 Top-level keys:
 - `version`: required policy version (`1`)
 - `default_action`: fallback when no rule matches (`allowed`, `manual_approval`, `readonly`, `blocked`)
+- `case_sensitive`: optional bool for case-sensitive path matching (default: `false`)
+- `symlink_policy`: action when path traverses a symlink (`blocked` default)
+- `include`: include one or many policy files (relative paths supported)
 - `tag_definitions`: map of tag name to glob patterns
+- `rule_groups`: reusable named groups of rules
 - `rules`: ordered list of rules
 
 Rule keys:
@@ -107,9 +114,17 @@ Rule keys:
 - `file_extension`: extension matcher(s), e.g. `.py` or `py`
 - `directory`: directory prefix matcher(s)
 - `tags`: tag matcher(s) from `tag_definitions`
+- `branch` / `branches`: optional branch pattern(s)
+- `environment` / `environments` / `env`: optional environment pattern(s)
+
+Rule group references inside `rules`:
+- `use_group`
+- `use_groups`
+- `name_prefix`
 
 Matching behavior:
 - A rule matches only when all selectors present in that rule match (AND behavior).
+- `path_glob` supports negation patterns with `!`, e.g. `["src/**", "!src/public/**"]`.
 - If multiple rules match, the strictest action wins: `blocked` > `readonly` > `manual_approval` > `allowed`.
 - If multiple matching rules have the same action level, the later rule in the file wins.
 
