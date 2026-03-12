@@ -90,6 +90,12 @@ filelock-ai check examples/plan.json --policy filelock-policy.yaml --branch main
 
 # 8) Initialize with built-in risk tags
 filelock-ai init-policy --profile startup-app --with-tag-pack baseline
+
+# 9) Use explicit plan adapter
+filelock-ai check plan.json --adapter openai_responses
+
+# 10) Run MCP endpoint for pre-edit checks
+filelock-ai mcp-server --policy filelock-policy.yaml --host 127.0.0.1 --port 8787
 ```
 
 Exit codes:
@@ -141,8 +147,16 @@ Matching behavior:
 - If multiple matching rules have the same action level, the later rule in the file wins.
 
 Input formats:
-- `check`: plan JSON (supports structured file/path fields and path-like strings)
+- `check`: plan JSON (supports adapter selection: `auto`, `generic_json`, `openai_responses`, `anthropic_messages`)
 - `validate`: diff text or plain changed-file list
+
+MCP endpoint:
+- `GET /health`
+- `POST /check` with one of:
+  - `changed_files`
+  - `plan` + optional `adapter`
+  - `path`
+- response contains decision buckets and per-file explain metadata.
 
 Migration:
 - `filelock-ai migrate-policy old-policy.yaml --output filelock-policy.yaml`

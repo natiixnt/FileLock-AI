@@ -305,6 +305,48 @@ rules:
     assert allowed_code == 0
 
 
+def test_check_supports_openai_adapter(tmp_path: Path) -> None:
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text(
+        """
+version: 1
+default_action: allowed
+rules:
+  - name: block-infra
+    action: blocked
+    directory: ["infra"]
+""",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        """
+{
+  "output": [
+    {
+      "type": "tool_call",
+      "arguments": "{\\"changed_files\\": [\\"infra/main.tf\\"]}"
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+
+    code = main(
+        [
+            "check",
+            str(plan_path),
+            "--policy",
+            str(policy_path),
+            "--adapter",
+            "openai_responses",
+        ]
+    )
+
+    assert code == 1
+
+
 def test_lint_policy_detects_warnings_and_strict_fails(tmp_path: Path, capsys) -> None:
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(

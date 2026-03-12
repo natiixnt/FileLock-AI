@@ -10,13 +10,15 @@ from pathlib import Path
 
 import yaml
 
+from filelock_ai.adapters import AdapterError, available_adapters, normalize_plan
 from filelock_ai.engine import EvaluationContext, EvaluationReport, evaluate_changes, evaluate_path
 from filelock_ai.linting import LintWarning, lint_policy
+from filelock_ai.mcp_server import run_mcp_server
 from filelock_ai.policy import PolicyError, load_policy
 from filelock_ai.schema_validation import SchemaValidationError, validate_policy_against_schema
 from filelock_ai.tag_packs import available_tag_packs
 from validators.diff_validator import DiffValidationError, load_changed_files
-from validators.plan_validator import PlanValidationError, extract_changed_files, load_plan_json
+from validators.plan_validator import PlanValidationError, load_plan_json
 
 _POLICY_PROFILES = {
     "startup-app": "startup_app.yaml",
@@ -44,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_init_policy(args)
     if args.command == "migrate-policy":
         return run_migrate_policy(args)
+    if args.command == "mcp-server":
+        return run_mcp_server_command(args)
 
     parser.print_help()
     return 1
@@ -59,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     check_parser = subparsers.add_parser("check", help="Check changed files from a plan JSON file.")
     check_parser.add_argument("plan", help="Path to plan JSON file.")
+    check_parser.add_argument(
+        "--adapter",
+        choices=available_adapters(),
+        default="auto",
+        help="Plan adapter format (default: auto).",
+    )
     check_parser.add_argument(
         "--policy",
         default="filelock-policy.yaml",
@@ -181,6 +191,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Overwrite output file if it exists.",
     )
 
+    mcp_parser = subparsers.add_parser("mcp-server", help="Run MCP-compatible HTTP endpoint for checks.")
+    mcp_parser.add_argument(
+        "--policy",
+        default="filelock-policy.yaml",
+        help="Path to YAML policy file. Default: filelock-policy.yaml",
+    )
+    mcp_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind host for MCP server. Default: 127.0.0.1",
+    )
+    mcp_parser.add_argument(
+        "--port",
+        type=int,
+        default=8787,
+        help="Bind port for MCP server. Default: 8787",
+    )
+    _add_context_args(mcp_parser)
+
     return parser
 
 
@@ -226,8 +255,9 @@ def run_check(args: argparse.Namespace) -> int:
     try:
         policy = load_policy(args.policy)
         plan = load_plan_json(args.plan)
-        changed_files = extract_changed_files(plan)
-    except (PolicyError, PlanValidationError) as exc:
+        normalized = normalize_plan(plan, adapter_name=args.adapter)
+        changed_files = normalized.changed_files
+    except (PolicyError, PlanValidationError, AdapterError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -439,6 +469,18 @@ def run_migrate_policy(args: argparse.Namespace) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     print(f"Migrated policy to version 1: {output_path}")
+    return 0
+
+
+def run_mcp_server_command(args: argparse.Namespace) -> int:
+    try:
+        policy = load_policy(args.policy)
+    except PolicyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    context = _build_context(args)
+    run_mcp_server(policy=policy, host=args.host, port=args.port, default_context=context)
     return 0
 
 
