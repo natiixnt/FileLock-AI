@@ -15,12 +15,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Collect changed files
         run: |
           set -euo pipefail
-          git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" > changed-files.txt
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          # Branch-creation pushes use an all-zero "before" SHA.
+          if [[ "${BEFORE}" == "0000000000000000000000000000000000000000" ]]; then
+            git diff-tree --no-commit-id --name-only -r "${AFTER}" > changed-files.txt
+          else
+            git diff --name-only "${BEFORE}" "${AFTER}" > changed-files.txt
+          fi
 
       - name: Run FileLock AI
         uses: ./.github/actions/filelock-ai-check
