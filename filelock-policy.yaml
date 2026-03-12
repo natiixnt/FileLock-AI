@@ -1,0 +1,52 @@
+version: 1
+default_action: manual_approval
+
+tag_definitions:
+  ci:
+    - ".github/workflows/**"
+    - ".github/actions/**"
+  secrets:
+    - "**/.env*"
+    - "**/*secret*"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/*.p12"
+
+rules:
+  - name: block-secrets
+    action: blocked
+    tags: ["secrets"]
+
+  - name: guard-ci-config
+    action: manual_approval
+    tags: ["ci"]
+
+  - name: allow-policy-files
+    action: allowed
+    path_glob:
+      - "filelock-policy.yaml"
+      - "policy/**/*.yaml"
+      - "policy/**/*.json"
+
+  - name: allow-python-source
+    action: allowed
+    directory:
+      - "filelock_ai"
+      - "validators"
+      - "tests"
+    file_extension:
+      - ".py"
+
+  - name: allow-docs-and-examples
+    action: allowed
+    path_glob:
+      - "README.md"
+      - "LICENSE"
+      - ".gitignore"
+      - "examples/**"
+
+  - name: allow-project-metadata
+    action: allowed
+    path_glob:
+      - "pyproject.toml"
+      - "AGENTS.md"
