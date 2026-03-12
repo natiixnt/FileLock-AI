@@ -270,3 +270,83 @@ rules:
     assert any(rule.name == "base:lock-infra" for rule in policy.rules)
     assert [item.path for item in report.blocked] == ["infra/main.tf"]
     assert [item.path for item in report.allowed] == ["src/app.py"]
+
+
+def test_builtin_tag_pack_applies_default_tags(tmp_path: Path) -> None:
+    policy_path = write_policy(
+        tmp_path / "policy.yaml",
+        """
+version: 1
+default_action: allowed
+tag_packs: [baseline]
+rules:
+  - name: block-secrets
+    action: blocked
+    tags: ["secrets"]
+""",
+    )
+
+    policy = load_policy(policy_path)
+    report = evaluate_changes(policy, ["config/.env.local"])
+
+    assert [item.path for item in report.blocked] == ["config/.env.local"]
+    assert "secrets" in report.blocked[0].tags
+
+
+def test_tag_severity_gates_escalate_action(tmp_path: Path) -> None:
+    policy_path = write_policy(
+        tmp_path / "policy.yaml",
+        """
+version: 1
+default_action: allowed
+tag_definitions:
+  secrets: ["secrets/**"]
+  infra: ["infra/**"]
+tag_severity:
+  secrets: critical
+  infra: high
+severity_gates:
+  approval_at_or_above: medium
+  block_at_or_above: critical
+rules: []
+""",
+    )
+
+    policy = load_policy(policy_path)
+    report = evaluate_changes(policy, ["infra/main.tf", "secrets/prod.key"])
+
+    assert [item.path for item in report.approval_required] == ["infra/main.tf"]
+    assert [item.path for item in report.blocked] == ["secrets/prod.key"]
+    assert report.blocked[0].risk_severity == "critical"
+    assert report.approval_required[0].risk_severity == "high"
+
+
+def test_codeowners_tags_can_drive_rules(tmp_path: Path) -> None:
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github" / "CODEOWNERS").write_text(
+        """
+/payments/** @org/payments-team
+""",
+        encoding="utf-8",
+    )
+    policy_path = write_policy(
+        tmp_path / "policy.yaml",
+        """
+version: 1
+default_action: allowed
+codeowners:
+  enabled: true
+  file: .github/CODEOWNERS
+  tag_prefix: owner_
+rules:
+  - name: owner-review
+    action: manual_approval
+    tags: ["owner_org_payments_team"]
+""",
+    )
+
+    policy = load_policy(policy_path)
+    report = evaluate_changes(policy, ["payments/api/routes.py"])
+
+    assert [item.path for item in report.approval_required] == ["payments/api/routes.py"]
+    assert "owner_org_payments_team" in report.approval_required[0].tags

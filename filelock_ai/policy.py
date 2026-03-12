@@ -6,9 +6,18 @@ from typing import Any
 
 import yaml
 
+from filelock_ai.codeowners import CodeownersError, load_codeowners_tag_patterns
 from filelock_ai.paths import normalize_repo_path
+from filelock_ai.tag_packs import load_tag_pack_patterns
 
 VALID_ACTIONS = {"allowed", "blocked", "manual_approval", "readonly"}
+VALID_SEVERITIES = ("low", "medium", "high", "critical")
+SEVERITY_RANK = {
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
 _ACTION_ALIASES = {
     "allow": "allowed",
 }
@@ -38,6 +47,9 @@ class Policy:
     symlink_action: str
     rules: tuple[Rule, ...]
     tag_patterns: dict[str, tuple[str, ...]]
+    tag_severity: dict[str, str]
+    approval_severity_gate: str | None
+    block_severity_gate: str | None
     source_path: str
     source_paths: tuple[str, ...]
     root_dir: str
@@ -60,8 +72,24 @@ def load_policy(policy_path: str) -> Policy:
         context="symlink_policy",
     )
 
+    pack_patterns: dict[str, tuple[str, ...]] = {}
+    pack_names = _to_str_list(merged_raw.get("tag_packs", []))
+    if pack_names:
+        try:
+            pack_patterns = load_tag_pack_patterns(pack_names)
+        except ValueError as exc:
+            raise PolicyError(str(exc)) from exc
+
+    codeowners_patterns = _load_codeowners_patterns(merged_raw, policy_file_path=path)
+
     tags_raw = merged_raw.get("tag_definitions", merged_raw.get("tags", {}))
-    tag_patterns = _parse_tag_patterns(tags_raw)
+    explicit_tag_patterns = _parse_tag_patterns(tags_raw)
+
+    # Conflict resolution: explicit tags override CODEOWNERS-derived tags, which override tag packs.
+    tag_patterns = _merge_tag_patterns(pack_patterns, codeowners_patterns, explicit_tag_patterns)
+
+    tag_severity = _parse_tag_severity(merged_raw.get("tag_severity", {}))
+    approval_severity_gate, block_severity_gate = _parse_severity_gates(merged_raw)
 
     rule_groups_raw = merged_raw.get("rule_groups", {})
     rules_raw = _expand_rules(merged_raw.get("rules", []), rule_groups_raw)
@@ -103,6 +131,9 @@ def load_policy(policy_path: str) -> Policy:
         symlink_action=symlink_action,
         rules=tuple(rules),
         tag_patterns=tag_patterns,
+        tag_severity=tag_severity,
+        approval_severity_gate=approval_severity_gate,
+        block_severity_gate=block_severity_gate,
         source_path=str(path),
         source_paths=tuple(source_paths),
         root_dir=str(path.resolve().parent),
@@ -167,9 +198,13 @@ def _merge_policy_raw(base: dict[str, Any], incoming: dict[str, Any]) -> dict[st
     out = dict(base)
 
     for key, value in incoming.items():
-        if key in {"rules", "tag_definitions", "tags", "rule_groups", "include"}:
+        if key in {"rules", "tag_definitions", "tags", "rule_groups", "include", "tag_packs"}:
             continue
         out[key] = value
+
+    merged_tag_packs = _to_str_list(base.get("tag_packs", [])) + _to_str_list(incoming.get("tag_packs", []))
+    if merged_tag_packs:
+        out["tag_packs"] = _dedupe_list([item.strip() for item in merged_tag_packs if item.strip()])
 
     base_tags = base.get("tag_definitions", base.get("tags", {}))
     in_tags = incoming.get("tag_definitions", incoming.get("tags", {}))
@@ -319,6 +354,90 @@ def _parse_tag_patterns(raw: Any) -> dict[str, tuple[str, ...]]:
         values = _to_str_list(patterns)
         parsed[tag_name] = _normalize_patterns(tuple(v.strip() for v in values if v.strip()))
     return parsed
+
+
+def _load_codeowners_patterns(raw: dict[str, Any], *, policy_file_path: Path) -> dict[str, tuple[str, ...]]:
+    config = raw.get("codeowners")
+    if config in (None, {}):
+        return {}
+    if not isinstance(config, dict):
+        raise PolicyError("'codeowners' must be an object.")
+
+    enabled = _parse_bool(config.get("enabled", True), "codeowners.enabled")
+    if not enabled:
+        return {}
+
+    tag_prefix = str(config.get("tag_prefix", "owner_")).strip() or "owner_"
+    file_name = str(config.get("file", ".github/CODEOWNERS")).strip() or ".github/CODEOWNERS"
+    codeowners_path = Path(file_name)
+    if not codeowners_path.is_absolute():
+        codeowners_path = policy_file_path.parent / codeowners_path
+
+    try:
+        return load_codeowners_tag_patterns(str(codeowners_path), tag_prefix=tag_prefix)
+    except CodeownersError as exc:
+        raise PolicyError(f"Invalid codeowners configuration: {exc}") from exc
+
+
+def _parse_tag_severity(raw: Any) -> dict[str, str]:
+    if raw in (None, {}):
+        return {}
+    if not isinstance(raw, dict):
+        raise PolicyError("'tag_severity' must be an object mapping tag -> severity.")
+
+    parsed: dict[str, str] = {}
+    for tag, value in raw.items():
+        tag_name = str(tag).strip().lower()
+        if not tag_name:
+            continue
+        parsed[tag_name] = _parse_severity(value, context=f"tag_severity.{tag_name}")
+    return parsed
+
+
+def _parse_severity_gates(raw: dict[str, Any]) -> tuple[str | None, str | None]:
+    gates_raw = raw.get("severity_gates", {})
+    if gates_raw in (None, {}):
+        gates: dict[str, Any] = {}
+    else:
+        if not isinstance(gates_raw, dict):
+            raise PolicyError("'severity_gates' must be an object.")
+        gates = gates_raw
+
+    approval_raw = gates.get("approval_at_or_above", raw.get("minimum_severity_for_approval"))
+    block_raw = gates.get("block_at_or_above", raw.get("minimum_severity_for_block"))
+
+    approval = _parse_optional_severity(approval_raw, context="severity gate approval")
+    block = _parse_optional_severity(block_raw, context="severity gate block")
+
+    if approval and block and SEVERITY_RANK[block] < SEVERITY_RANK[approval]:
+        raise PolicyError(
+            "Invalid severity_gates: block_at_or_above cannot be lower than approval_at_or_above."
+        )
+
+    return approval, block
+
+
+def _parse_optional_severity(value: Any, *, context: str) -> str | None:
+    if value in (None, ""):
+        return None
+    return _parse_severity(value, context=context)
+
+
+def _parse_severity(value: Any, *, context: str) -> str:
+    severity = str(value).strip().lower()
+    if severity not in SEVERITY_RANK:
+        raise PolicyError(
+            f"Invalid severity '{value}' in {context}. Valid values: {list(VALID_SEVERITIES)}."
+        )
+    return severity
+
+
+def _merge_tag_patterns(*maps: dict[str, tuple[str, ...]]) -> dict[str, tuple[str, ...]]:
+    merged: dict[str, tuple[str, ...]] = {}
+    for mapping in maps:
+        for tag, patterns in mapping.items():
+            merged[tag] = patterns
+    return merged
 
 
 def _to_tuple(data: dict[str, Any], keys: list[str]) -> tuple[str, ...]:

@@ -87,6 +87,9 @@ filelock-ai validate-policy filelock-policy.yaml --format json
 
 # 7) Pass branch/environment context
 filelock-ai check examples/plan.json --policy filelock-policy.yaml --branch main --environment prod
+
+# 8) Initialize with built-in risk tags
+filelock-ai init-policy --profile startup-app --with-tag-pack baseline
 ```
 
 Exit codes:
@@ -104,6 +107,15 @@ Top-level keys:
 - `symlink_policy`: action when path traverses a symlink (`blocked` default)
 - `include`: include one or many policy files (relative paths supported)
 - `tag_definitions`: map of tag name to glob patterns
+- `tag_packs`: optional built-in risk tag packs (currently: `baseline`)
+- `tag_severity`: map `tag -> low|medium|high|critical`
+- `severity_gates`: optional severity escalation gates
+  - `approval_at_or_above`
+  - `block_at_or_above`
+- `codeowners`: optional CODEOWNERS-based tag mapping
+  - `enabled`
+  - `file`
+  - `tag_prefix`
 - `rule_groups`: reusable named groups of rules
 - `rules`: ordered list of rules
 
@@ -138,6 +150,9 @@ Migration:
 JSON Schema:
 - `policy/schema/filelock-policy.schema.json`
 - CLI validation: `filelock-ai validate-policy filelock-policy.yaml`
+- Conflict resolution:
+  - Explicit `tag_definitions` override CODEOWNERS-derived tags.
+  - CODEOWNERS-derived tags override `tag_packs`.
 
 Output buckets:
 - `allowed_changes`

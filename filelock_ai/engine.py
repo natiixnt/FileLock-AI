@@ -5,7 +5,7 @@ from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 
 from filelock_ai.paths import dedupe_repo_paths, normalize_repo_path
-from filelock_ai.policy import Policy, Rule
+from filelock_ai.policy import Policy, Rule, SEVERITY_RANK
 
 _ACTION_PRIORITY = {
     "allowed": 0,
@@ -27,6 +27,7 @@ class FileDecision:
     action: str
     matched_rule: str | None
     tags: tuple[str, ...]
+    risk_severity: str | None = None
 
     @property
     def category(self) -> str:
@@ -110,6 +111,7 @@ def evaluate_path(
             action=policy.symlink_action,
             matched_rule=f"symlink-guard:{symlink_hit}",
             tags=file_tags,
+            risk_severity=_highest_tag_severity(file_tags, policy.tag_severity),
         )
 
     matched: list[Rule] = [
@@ -124,9 +126,27 @@ def evaluate_path(
             key=lambda r: (_ACTION_PRIORITY.get(r.action, -1), policy.rules.index(r)),
             reverse=True,
         )[0]
-        return FileDecision(path=path, action=winner.action, matched_rule=winner.name, tags=file_tags)
+        action = winner.action
+        matched_rule = winner.name
+    else:
+        action = policy.default_action
+        matched_rule = None
 
-    return FileDecision(path=path, action=policy.default_action, matched_rule=None, tags=file_tags)
+    risk_severity = _highest_tag_severity(file_tags, policy.tag_severity)
+    action = _apply_severity_gates(
+        action,
+        risk_severity=risk_severity,
+        approval_gate=policy.approval_severity_gate,
+        block_gate=policy.block_severity_gate,
+    )
+
+    return FileDecision(
+        path=path,
+        action=action,
+        matched_rule=matched_rule,
+        tags=file_tags,
+        risk_severity=risk_severity,
+    )
 
 
 def infer_tags(path: str, policy: Policy) -> tuple[str, ...]:
@@ -250,4 +270,44 @@ def _decision_to_dict(decision: FileDecision) -> dict[str, object]:
     }
     if decision.matched_rule:
         payload["matched_rule"] = decision.matched_rule
+    if decision.risk_severity:
+        payload["risk_severity"] = decision.risk_severity
     return payload
+
+
+def _highest_tag_severity(tags: tuple[str, ...], tag_severity: dict[str, str]) -> str | None:
+    best: str | None = None
+    best_rank = -1
+    for tag in tags:
+        severity = tag_severity.get(tag)
+        if not severity:
+            continue
+        rank = SEVERITY_RANK[severity]
+        if rank > best_rank:
+            best = severity
+            best_rank = rank
+    return best
+
+
+def _apply_severity_gates(
+    action: str,
+    *,
+    risk_severity: str | None,
+    approval_gate: str | None,
+    block_gate: str | None,
+) -> str:
+    if not risk_severity:
+        return action
+
+    level = SEVERITY_RANK[risk_severity]
+    if block_gate and level >= SEVERITY_RANK[block_gate]:
+        return _stronger_action(action, "blocked")
+    if approval_gate and level >= SEVERITY_RANK[approval_gate]:
+        return _stronger_action(action, "manual_approval")
+    return action
+
+
+def _stronger_action(current: str, target: str) -> str:
+    if _ACTION_PRIORITY[target] > _ACTION_PRIORITY[current]:
+        return target
+    return current

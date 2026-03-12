@@ -24,12 +24,55 @@
     "include": {
       "$ref": "#/$defs/stringOrStringArray"
     },
+    "tag_packs": {
+      "$ref": "#/$defs/stringOrStringArray"
+    },
     "tag_definitions": {
       "$ref": "#/$defs/tagDefinitions"
     },
     "tags": {
       "$ref": "#/$defs/tagDefinitions",
       "description": "Legacy alias for tag_definitions."
+    },
+    "tag_severity": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/severity"
+      }
+    },
+    "severity_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "approval_at_or_above": {
+          "$ref": "#/$defs/severity"
+        },
+        "block_at_or_above": {
+          "$ref": "#/$defs/severity"
+        }
+      }
+    },
+    "minimum_severity_for_approval": {
+      "$ref": "#/$defs/severity"
+    },
+    "minimum_severity_for_block": {
+      "$ref": "#/$defs/severity"
+    },
+    "codeowners": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag_prefix": {
+          "type": "string"
+        }
+      }
     },
     "rule_groups": {
       "type": "object",
@@ -62,6 +105,10 @@
     "actionOrAllowAlias": {
       "type": "string",
       "enum": ["allow", "allowed", "manual_approval", "readonly", "blocked"]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical"]
     },
     "stringArray": {
       "type": "array",

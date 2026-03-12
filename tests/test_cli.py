@@ -14,6 +14,27 @@ def test_init_policy_creates_file(tmp_path: Path) -> None:
     assert "default_action" in output.read_text(encoding="utf-8")
 
 
+def test_init_policy_with_tag_pack(tmp_path: Path) -> None:
+    output = tmp_path / "filelock-policy.yaml"
+
+    code = main(
+        [
+            "init-policy",
+            "--profile",
+            "startup-app",
+            "--output",
+            str(output),
+            "--with-tag-pack",
+            "baseline",
+        ]
+    )
+
+    assert code == 0
+    raw = output.read_text(encoding="utf-8")
+    assert "tag_packs:" in raw
+    assert "- baseline" in raw
+
+
 def test_check_command_blocks_secret_file(tmp_path: Path) -> None:
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(
@@ -130,6 +151,41 @@ rules:
     assert '"path": "infra/main.tf"' in captured.out
     assert '"action": "readonly"' in captured.out
     assert '"matched_rule": "protect-infra"' in captured.out
+
+
+def test_explain_includes_risk_severity_when_available(tmp_path: Path, capsys) -> None:
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text(
+        """
+version: 1
+default_action: allowed
+tag_definitions:
+  secrets: ["secrets/**"]
+tag_severity:
+  secrets: critical
+severity_gates:
+  block_at_or_above: critical
+rules: []
+""",
+        encoding="utf-8",
+    )
+
+    code = main(
+        [
+            "explain",
+            "secrets/key.pem",
+            "--policy",
+            str(policy_path),
+            "--format",
+            "json",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert code == 0
+    assert payload["risk_severity"] == "critical"
+    assert payload["action"] == "blocked"
 
 
 def test_migrate_policy_adds_version(tmp_path: Path) -> None:
@@ -344,7 +400,7 @@ rules:
     captured = capsys.readouterr()
 
     assert code == 1
-    assert "| Category | Path | Action | Matched Rule | Tags |" in captured.out
+    assert "| Category | Path | Action | Matched Rule | Tags | Severity |" in captured.out
     assert "`infra/main.tf`" in captured.out
 
 

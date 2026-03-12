@@ -14,6 +14,7 @@ from filelock_ai.engine import EvaluationContext, EvaluationReport, evaluate_cha
 from filelock_ai.linting import LintWarning, lint_policy
 from filelock_ai.policy import PolicyError, load_policy
 from filelock_ai.schema_validation import SchemaValidationError, validate_policy_against_schema
+from filelock_ai.tag_packs import available_tag_packs
 from validators.diff_validator import DiffValidationError, load_changed_files
 from validators.plan_validator import PlanValidationError, extract_changed_files, load_plan_json
 
@@ -157,6 +158,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Overwrite output file if it exists.",
+    )
+    init_parser.add_argument(
+        "--with-tag-pack",
+        dest="tag_packs",
+        action="append",
+        choices=available_tag_packs(),
+        help="Optional built-in tag pack to enable (can be passed multiple times).",
     )
 
     migrate_parser = subparsers.add_parser(
@@ -330,6 +338,7 @@ def run_explain(args: argparse.Namespace) -> int:
         "category": decision.category,
         "matched_rule": decision.matched_rule,
         "tags": list(decision.tags),
+        "risk_severity": decision.risk_severity,
         "default_action": policy.default_action,
         "used_default": decision.matched_rule is None,
         "branch": context.branch,
@@ -361,6 +370,29 @@ def run_init_policy(args: argparse.Namespace) -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     with resources.as_file(template) as source:
         shutil.copyfile(source, target)
+
+    if args.tag_packs:
+        try:
+            raw = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            print(f"error: generated template YAML is invalid: {exc}", file=sys.stderr)
+            return 1
+        if not isinstance(raw, dict):
+            print("error: generated template is not a policy object", file=sys.stderr)
+            return 1
+
+        existing = raw.get("tag_packs", [])
+        if isinstance(existing, str):
+            existing_packs = [existing]
+        elif isinstance(existing, list):
+            existing_packs = [str(item) for item in existing]
+        else:
+            existing_packs = []
+
+        merged = _dedupe_items([*existing_packs, *args.tag_packs])
+        raw["tag_packs"] = merged
+        target.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
     print(f"Created policy from '{args.profile}' profile: {target}")
     return 0
 
@@ -435,7 +467,8 @@ def _print_section(title: str, entries: tuple) -> None:
     for entry in entries:
         rule = f" [{entry.matched_rule}]" if entry.matched_rule else ""
         tags = f" tags={','.join(entry.tags)}" if entry.tags else ""
-        print(f"  - {entry.path}{rule}{tags}")
+        severity = f" severity={entry.risk_severity}" if entry.risk_severity else ""
+        print(f"  - {entry.path}{rule}{tags}{severity}")
 
 
 def _render_lint_warnings(
@@ -471,15 +504,16 @@ def _render_lint_warnings(
 
 def _report_to_markdown(report: EvaluationReport) -> str:
     lines = [
-        "| Category | Path | Action | Matched Rule | Tags |",
-        "| --- | --- | --- | --- | --- |",
+        "| Category | Path | Action | Matched Rule | Tags | Severity |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
 
     def add_rows(category: str, entries: tuple) -> None:
         for entry in entries:
             lines.append(
                 f"| {category} | `{entry.path}` | `{entry.action}` | "
-                f"`{entry.matched_rule or '-'}` | `{','.join(entry.tags) if entry.tags else '-'}` |"
+                f"`{entry.matched_rule or '-'}` | `{','.join(entry.tags) if entry.tags else '-'}` | "
+                f"`{entry.risk_severity or '-'}` |"
             )
 
     add_rows("allowed", report.allowed)
@@ -487,7 +521,7 @@ def _report_to_markdown(report: EvaluationReport) -> str:
     add_rows("approval_required", report.approval_required)
 
     if len(lines) == 2:
-        lines.append("| none | - | - | - | - |")
+        lines.append("| none | - | - | - | - | - |")
     return "\n".join(lines)
 
 
@@ -515,6 +549,7 @@ def _report_to_sarif(report: EvaluationReport) -> dict[str, object]:
                 action=decision.action,
                 matched_rule=decision.matched_rule,
                 tags=decision.tags,
+                risk_severity=decision.risk_severity,
             )
         )
     for decision in report.approval_required:
@@ -526,6 +561,7 @@ def _report_to_sarif(report: EvaluationReport) -> dict[str, object]:
                 action=decision.action,
                 matched_rule=decision.matched_rule,
                 tags=decision.tags,
+                risk_severity=decision.risk_severity,
             )
         )
 
@@ -565,16 +601,18 @@ def _sarif_result(
     action: str,
     matched_rule: str | None,
     tags: tuple[str, ...],
+    risk_severity: str | None,
 ) -> dict[str, object]:
     rule_text = matched_rule or "default_action"
     tags_text = ",".join(tags) if tags else "none"
+    severity_text = risk_severity or "none"
     return {
         "ruleId": rule_id,
         "level": level,
         "message": {
             "text": (
                 f"Path '{decision_path}' classified as '{action}' "
-                f"(matched_rule={rule_text}, tags={tags_text})."
+                f"(matched_rule={rule_text}, tags={tags_text}, severity={severity_text})."
             )
         },
         "locations": [
@@ -615,6 +653,18 @@ def _build_context(args: argparse.Namespace) -> EvaluationContext:
     branch = getattr(args, "branch", None)
     environment = getattr(args, "environment", None)
     return EvaluationContext(branch=branch, environment=environment)
+
+
+def _dedupe_items(items: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = str(item).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
 
 
 if __name__ == "__main__":
