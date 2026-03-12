@@ -1,0 +1,57 @@
+version: 1
+default_action: manual_approval
+
+tag_definitions:
+  auth:
+    - "packages/auth/**"
+    - "services/auth/**"
+  infra:
+    - "infra/**"
+    - "deploy/**"
+    - "platform/**"
+    - ".github/workflows/**"
+  migrations:
+    - "**/migrations/**"
+  secrets:
+    - "**/.env*"
+    - "**/*.pem"
+    - "**/*.key"
+
+rules:
+  - name: block-secrets
+    action: blocked
+    tags: ["secrets"]
+
+  - name: lock-infra
+    action: readonly
+    tags: ["infra"]
+
+  - name: workspace-config-manual
+    action: manual_approval
+    path_glob:
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - "nx.json"
+      - "package.json"
+
+  - name: migrations-manual
+    action: manual_approval
+    tags: ["migrations"]
+
+  - name: allow-app-packages
+    action: allowed
+    directory:
+      - "apps"
+      - "packages"
+      - "services"
+    file_extension:
+      - ".ts"
+      - ".tsx"
+      - ".js"
+      - ".jsx"
+      - ".py"
+
+  - name: allow-tests-docs
+    action: allowed
+    directory: ["tests", "docs"]
+    file_extension: [".md", ".txt", ".ts", ".js", ".py"]

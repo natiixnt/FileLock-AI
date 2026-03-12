@@ -1,0 +1,8 @@
+{
+  "goal": "Update API and docs",
+  "changed_files": [
+    "src/api/routes.py",
+    "infra/main.tf",
+    "services/orders/migrations/002_add_index.sql"
+  ]
+}

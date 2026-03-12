@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "filelock-ai"
+version = "0.1.0"
+description = "Policy-first guardrails for file edits made by coding agents"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+  { name = "FileLock AI Contributors" }
+]
+dependencies = [
+  "PyYAML>=6.0",
+  "jsonschema>=4.0"
+]
+
+[project.scripts]
+filelock-ai = "filelock_ai.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.setuptools]
+packages = ["filelock_ai", "validators"]
+
+[tool.setuptools.package-data]
+filelock_ai = ["policy_templates/*.yaml", "policy_schema/*.json"]

@@ -1,0 +1,38 @@
+version: 1
+default_action: manual_approval
+
+tag_definitions:
+  auth:
+    - "src/auth/**"
+    - "**/auth/**"
+  infra:
+    - "infra/**"
+    - ".github/workflows/**"
+  migrations:
+    - "**/migrations/**"
+  secrets:
+    - "**/.env*"
+    - "**/*secret*"
+    - "**/*.pem"
+    - "**/*.key"
+
+rules:
+  - name: block-secrets
+    action: blocked
+    tags: ["secrets"]
+
+  - name: protect-infra
+    action: readonly
+    tags: ["infra"]
+
+  - name: migrations-need-review
+    action: manual_approval
+    tags: ["migrations"]
+
+  - name: allow-app-code
+    action: allowed
+    directory: ["src", "app", "tests"]
+
+  - name: allow-safe-docs
+    action: allowed
+    file_extension: [".md", ".txt"]

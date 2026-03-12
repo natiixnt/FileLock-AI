@@ -1,0 +1,58 @@
+version: 1
+default_action: manual_approval
+
+tag_definitions:
+  auth:
+    - "services/auth/**"
+    - "src/security/**"
+  infra:
+    - "infra/**"
+    - "terraform/**"
+    - "k8s/**"
+    - ".github/workflows/**"
+  migrations:
+    - "**/migrations/**"
+    - "**/db/migrate/**"
+  secrets:
+    - "**/.env*"
+    - "**/secrets/**"
+    - "**/*.pem"
+    - "**/*.key"
+
+rules:
+  - name: hard-block-secrets
+    action: blocked
+    tags: ["secrets"]
+
+  - name: hard-block-prod-config
+    action: blocked
+    path_glob:
+      - "**/prod/**"
+      - "**/production/**"
+
+  - name: infra-readonly
+    action: readonly
+    tags: ["infra"]
+
+  - name: auth-manual-approval
+    action: manual_approval
+    tags: ["auth"]
+
+  - name: migrations-manual-approval
+    action: manual_approval
+    tags: ["migrations"]
+
+  - name: allow-api-implementation
+    action: allowed
+    directory:
+      - "services"
+      - "src"
+    file_extension:
+      - ".py"
+      - ".ts"
+      - ".go"
+      - ".java"
+
+  - name: allow-tests-and-docs
+    action: allowed
+    directory: ["tests", "docs"]

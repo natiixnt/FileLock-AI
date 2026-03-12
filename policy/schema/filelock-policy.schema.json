@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://filelock-ai.dev/schemas/filelock-policy.schema.json",
+  "title": "FileLock AI Policy",
+  "description": "Schema for FileLock AI policy files.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "default_action", "rules"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Policy schema version."
+    },
+    "default_action": {
+      "$ref": "#/$defs/action"
+    },
+    "tag_definitions": {
+      "$ref": "#/$defs/tagDefinitions"
+    },
+    "tags": {
+      "$ref": "#/$defs/tagDefinitions",
+      "description": "Legacy alias for tag_definitions."
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rule"
+      }
+    }
+  },
+  "$defs": {
+    "action": {
+      "type": "string",
+      "enum": ["allowed", "manual_approval", "readonly", "blocked"]
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "stringOrStringArray": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "$ref": "#/$defs/stringArray"
+        }
+      ]
+    },
+    "tagDefinitions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/stringOrStringArray"
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "$ref": "#/$defs/action"
+        },
+        "path_glob": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "path_globs": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "paths": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "glob": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "file_extension": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "extensions": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "ext": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "directory": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "directories": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "dir": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "tags": {
+          "$ref": "#/$defs/stringOrStringArray"
+        },
+        "tag": {
+          "$ref": "#/$defs/stringOrStringArray"
+        }
+      }
+    }
+  }
+}
