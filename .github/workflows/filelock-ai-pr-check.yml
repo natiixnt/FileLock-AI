@@ -1,0 +1,111 @@
+name: FileLock AI PR Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  filelock-ai:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed files
+        run: |
+          set -euo pipefail
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > changed-files.txt
+
+      - name: Run FileLock AI
+        id: filelock
+        uses: ./.github/actions/filelock-ai-check
+        continue-on-error: true
+        with:
+          policy_path: filelock-policy.yaml
+          input_mode: diff
+          input_path: changed-files.txt
+          output_format: json
+          fail_on: blocked_or_approval
+          enforce: "false"
+          branch_context: ${{ github.head_ref }}
+
+      - name: Emit inline annotations
+        run: |
+          python .github/scripts/emit_filelock_annotations.py "${{ steps.filelock.outputs.result_json_path }}"
+
+      - name: Upsert PR summary comment
+        uses: actions/github-script@v7
+        env:
+          RESULT_PATH: ${{ steps.filelock.outputs.result_json_path }}
+          EXIT_CODE: ${{ steps.filelock.outputs.exit_code }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- filelock-ai-summary -->';
+            const payload = JSON.parse(fs.readFileSync(process.env.RESULT_PATH, 'utf8'));
+
+            const rows = [];
+            const pushRows = (category, items) => {
+              for (const item of items || []) {
+                rows.push(`| ${category} | \`${item.path}\` | \`${item.action}\` | \`${item.matched_rule || '-'}\` | \`${(item.tags || []).join(',') || '-'}\` | \`${item.risk_severity || '-'}\` |`);
+              }
+            };
+            pushRows('allowed', payload.allowed_changes);
+            pushRows('blocked', payload.blocked_changes);
+            pushRows('approval_required', payload.approval_required_changes);
+            if (rows.length === 0) {
+              rows.push('| none | - | - | - | - | - |');
+            }
+
+            const body = [
+              marker,
+              '## FileLock AI Summary',
+              '',
+              `Exit code: ${process.env.EXIT_CODE}`,
+              '',
+              '| Category | Path | Action | Matched Rule | Tags | Severity |',
+              '| --- | --- | --- | --- | --- | --- |',
+              ...rows,
+            ].join('\n');
+
+            const {owner, repo} = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find((c) => c.user && c.user.type === 'Bot' && c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
+      - name: Enforce policy result
+        run: |
+          code="${{ steps.filelock.outputs.exit_code }}"
+          if [ "$code" -ne 0 ]; then
+            echo "FileLock AI reported disallowed or approval-required changes."
+            exit "$code"
+          fi

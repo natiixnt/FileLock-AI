@@ -158,6 +158,18 @@ MCP endpoint:
   - `path`
 - response contains decision buckets and per-file explain metadata.
 
+GitHub CI:
+- First-party action: `.github/actions/filelock-ai-check/action.yml`
+- Example workflows:
+  - `.github/workflows/filelock-ai-pr-check.yml`
+  - `.github/workflows/filelock-ai-push-check.yml`
+- PR workflow behavior:
+  - publishes inline annotations for blocked/approval-required files
+  - upserts a sticky summary comment on the pull request
+- Release/versioning guidance:
+  - pin by commit SHA for maximum safety
+  - publish and pin stable action tags (`v1`, `v1.1`, etc.) for shared usage
+
 Migration:
 - `filelock-ai migrate-policy old-policy.yaml --output filelock-policy.yaml`
 

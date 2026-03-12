@@ -1,0 +1,106 @@
+name: FileLock AI Check
+description: Run FileLock AI policy checks for plan or diff inputs.
+
+inputs:
+  policy_path:
+    description: Path to filelock policy YAML.
+    required: false
+    default: filelock-policy.yaml
+  input_mode:
+    description: Input mode. One of plan or diff.
+    required: false
+    default: diff
+  input_path:
+    description: Path to plan JSON or changed-file list.
+    required: true
+  output_format:
+    description: Output format for FileLock AI.
+    required: false
+    default: json
+  fail_on:
+    description: Fail behavior passed to FileLock AI (blocked_or_approval, blocked, never).
+    required: false
+    default: blocked_or_approval
+  adapter:
+    description: Plan adapter to use when input_mode is plan.
+    required: false
+    default: auto
+  branch_context:
+    description: Optional branch context.
+    required: false
+    default: ""
+  environment_context:
+    description: Optional environment context.
+    required: false
+    default: ""
+  enforce:
+    description: If true, action exits with FileLock AI exit code.
+    required: false
+    default: "true"
+
+outputs:
+  result_json_path:
+    description: Path to JSON result output.
+    value: ${{ steps.run.outputs.result_json_path }}
+  exit_code:
+    description: FileLock AI process exit code.
+    value: ${{ steps.run.outputs.exit_code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install FileLock AI
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --upgrade pip
+        python -m pip install .
+
+    - id: run
+      name: Run FileLock AI
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [[ "${{ inputs.output_format }}" != "json" ]]; then
+          echo "This action currently requires output_format=json for downstream reporting."
+          exit 1
+        fi
+
+        RESULT_PATH="${RUNNER_TEMP}/filelock-ai-result.json"
+        CMD=(python -m filelock_ai.cli)
+
+        if [[ "${{ inputs.input_mode }}" == "plan" ]]; then
+          CMD+=(check "${{ inputs.input_path }}" --policy "${{ inputs.policy_path }}" --adapter "${{ inputs.adapter }}")
+        elif [[ "${{ inputs.input_mode }}" == "diff" ]]; then
+          CMD+=(validate "${{ inputs.input_path }}" --policy "${{ inputs.policy_path }}")
+        else
+          echo "Invalid input_mode: ${{ inputs.input_mode }}"
+          exit 1
+        fi
+
+        CMD+=(--format "${{ inputs.output_format }}" --fail-on "${{ inputs.fail_on }}")
+
+        if [[ -n "${{ inputs.branch_context }}" ]]; then
+          CMD+=(--branch "${{ inputs.branch_context }}")
+        fi
+        if [[ -n "${{ inputs.environment_context }}" ]]; then
+          CMD+=(--environment "${{ inputs.environment_context }}")
+        fi
+
+        set +e
+        "${CMD[@]}" > "${RESULT_PATH}"
+        EXIT_CODE=$?
+        set -e
+
+        echo "result_json_path=${RESULT_PATH}" >> "$GITHUB_OUTPUT"
+        echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+        if [[ "${{ inputs.enforce }}" == "true" && "${EXIT_CODE}" -ne 0 ]]; then
+          exit "${EXIT_CODE}"
+        fi

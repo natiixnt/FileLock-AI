@@ -1,0 +1,33 @@
+name: FileLock AI Push Check
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  filelock-ai:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Collect changed files
+        run: |
+          set -euo pipefail
+          git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" > changed-files.txt
+
+      - name: Run FileLock AI
+        uses: ./.github/actions/filelock-ai-check
+        with:
+          policy_path: filelock-policy.yaml
+          input_mode: diff
+          input_path: changed-files.txt
+          output_format: json
+          fail_on: blocked_or_approval
+          enforce: "true"
